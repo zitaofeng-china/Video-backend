@@ -1,0 +1,125 @@
+name: backend-ci-cd
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run backend checks
+        run: pnpm test
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: ci
+    runs-on: ubuntu-latest
+    concurrency:
+      group: backend-deploy-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deploy configuration
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$SSH_HOST" || (echo "Missing secret: SSH_HOST" && exit 1)
+          test -n "$SSH_USER" || (echo "Missing secret: SSH_USER" && exit 1)
+          test -n "$SSH_PRIVATE_KEY" || (echo "Missing secret: SSH_PRIVATE_KEY" && exit 1)
+
+      - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          if [ -n "$SSH_PORT" ]; then
+            ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Sync backend source
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          BACKEND_DEPLOY_PATH: ${{ vars.BACKEND_DEPLOY_PATH }}
+        run: |
+          SSH_PORT="${SSH_PORT:-22}"
+          DEPLOY_PATH="${BACKEND_DEPLOY_PATH:-/srv/soundlink/backend}"
+
+          ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_PATH'"
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude 'node_modules/' \
+            --exclude '.env' \
+            --exclude 'logs/' \
+            -e "ssh -i ~/.ssh/id_ed25519 -p $SSH_PORT" \
+            ./ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+      - name: Install and restart backend
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          BACKEND_DEPLOY_PATH: ${{ vars.BACKEND_DEPLOY_PATH }}
+          BACKEND_APP_NAME: ${{ vars.BACKEND_APP_NAME }}
+          BACKEND_HEALTHCHECK_URL: ${{ vars.BACKEND_HEALTHCHECK_URL }}
+        run: |
+          SSH_PORT="${SSH_PORT:-22}"
+          DEPLOY_PATH="${BACKEND_DEPLOY_PATH:-/srv/soundlink/backend}"
+          APP_NAME="${BACKEND_APP_NAME:-soundlink-backend}"
+          HEALTHCHECK_URL="${BACKEND_HEALTHCHECK_URL:-http://127.0.0.1:8080/health}"
+
+          ssh -i ~/.ssh/id_ed25519 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "
+            set -e
+            cd '$DEPLOY_PATH'
+            test -f .env || (echo 'Missing server-side .env file in $DEPLOY_PATH' && exit 1)
+            command -v pm2 >/dev/null 2>&1 || (echo 'pm2 is not installed on the server' && exit 1)
+            command -v corepack >/dev/null 2>&1 || (echo 'corepack is not installed on the server' && exit 1)
+            corepack enable
+            pnpm install --prod --frozen-lockfile
+            if pm2 describe '$APP_NAME' >/dev/null 2>&1; then
+              pm2 reload ecosystem.config.cjs --only '$APP_NAME' --env production --update-env
+            else
+              pm2 start ecosystem.config.cjs --only '$APP_NAME' --env production
+            fi
+            pm2 save
+            curl --fail --silent --show-error '$HEALTHCHECK_URL' >/dev/null
+          "
