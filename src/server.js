@@ -62,7 +62,7 @@ app.use(errorHandler);
 
 initWebSocket(server);
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 6060;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running at http://0.0.0.0:${PORT}`);
   console.log('WebSocket server initialized');
