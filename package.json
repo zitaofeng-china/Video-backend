@@ -1,0 +1,39 @@
+{
+  "name": "video-chat-backend",
+  "version": "1.0.0",
+  "description": "Video Chat Application Backend with MongoDB",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "check-env": "node src/utils/envCheck.js",
+    "generate-secret": "node src/utils/envCheck.js --generate-secret",
+    "test": "node --check src/server.js && node --check src/config/database.js && node --check src/controllers/authController.js && node --check src/controllers/emailController.js && node --check src/controllers/faceController.js && node --check src/middleware/auth.js && node --check src/middleware/errorHandler.js && node --check src/middleware/validator.js && node --check src/models/FaceData.js && node --check src/models/Room.js && node --check src/models/User.js && node --check src/routes/authRoutes.js && node --check src/routes/emailRoutes.js && node --check src/routes/faceRoutes.js && node --check src/utils/envCheck.js && node --check src/websocket/roomManager.js && node --check src/websocket/websocketHandler.js"
+  },
+  "keywords": [
+    "video-chat",
+    "webrtc",
+    "websocket",
+    "mongodb"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.21.2",
+    "mongoose": "^8.0.0",
+    "ws": "^8.18.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^7.0.10",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5",
+    "compression": "^1.7.4",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
